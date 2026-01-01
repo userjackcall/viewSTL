@@ -1,0 +1,1085 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STL 檔案瀏覽器 v0.0.20</title>
+    <meta name="description" content="A modern web-based STL file browser and viewer using File System Access API.">
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600&display=swap" rel="stylesheet">
+
+    <!-- Three.js (No-Module / UMD Version for file:// support) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+    <style>
+        :root {
+            /* Color Palette - Cyberpunk / Tech Dark */
+            --bg-dark: #0a0b10;
+            --bg-panel: #14161f;
+            --bg-panel-transparent: rgba(20, 22, 31, 0.85);
+            --primary: #00f2ff;
+            --primary-dim: rgba(0, 242, 255, 0.1);
+            --primary-hover: #4df8ff;
+            --text-main: #ffffff;
+            --text-muted: #8b9bb4;
+            --border-color: rgba(255, 255, 255, 0.1);
+            --glass-border: 1px solid rgba(255, 255, 255, 0.05);
+            --shadow-sm: 0 4px 6px rgba(0, 0, 0, 0.3);
+            --shadow-glow: 0 0 15px rgba(0, 242, 255, 0.2);
+            --font-main: 'Outfit', sans-serif;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background-color: var(--bg-dark);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            height: 100vh;
+            overflow: hidden;
+            line-height: 1.5;
+        }
+
+        /* Layout */
+        .app-container {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            background: radial-gradient(circle at top right, #1a2236 0%, var(--bg-dark) 40%);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 300px;
+            background: var(--bg-panel-transparent);
+            backdrop-filter: blur(10px);
+            border-right: var(--glass-border);
+            display: flex;
+            flex-direction: column;
+            padding: 1.5rem;
+            flex-shrink: 0;
+            position: relative;
+            z-index: 10;
+            min-width: 200px;
+            max-width: 50vw;
+        }
+
+        /* Resizer Handle */
+        .resizer {
+            width: 6px;
+            background: transparent;
+            cursor: col-resize;
+            z-index: 20;
+            transition: background 0.2s, box-shadow 0.2s;
+            flex-shrink: 0;
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .resizer:hover,
+        .resizer.active {
+            background: var(--primary);
+            box-shadow: 0 0 10px var(--primary);
+        }
+
+        .brand {
+            margin-bottom: 2rem;
+        }
+
+        .brand h1 {
+            font-weight: 600;
+            font-size: 1.5rem;
+            letter-spacing: 0.5px;
+            background: linear-gradient(90deg, #fff, var(--text-muted));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            max-width: 60%;
+        }
+
+        /* Model Stats in Top Bar */
+        .file-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .model-stats {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            background: rgba(255, 255, 255, 0.05);
+            padding: 0.3rem 0.8rem;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            margin-left: 1rem;
+        }
+
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            color: #00f2ff;
+        }
+
+        .stat-item span {
+            color: #fff;
+            font-family: monospace;
+            font-weight: 500;
+        }
+
+        .stat-divider {
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 0.8rem;
+        }
+
+        .version {
+            font-size: 0.75rem;
+            color: var(--primary);
+            font-family: monospace;
+            opacity: 0.8;
+        }
+
+        /* Buttons */
+        .btn-primary {
+            background: var(--primary-dim);
+            border: 1px solid var(--primary);
+            color: var(--primary);
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: var(--font-main);
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.05);
+        }
+
+        .btn-primary:hover {
+            background: var(--primary);
+            color: #000;
+            box-shadow: var(--shadow-glow);
+            transform: translateY(-1px);
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-muted);
+            padding: 0.6rem 1rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: var(--font-main);
+            font-size: 0.85rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            width: 100%;
+            margin-bottom: 1.5rem;
+            transition: all 0.3s ease;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+        }
+
+        /* File Tree */
+        .file-tree-container {
+            flex: 1;
+            overflow-y: auto;
+            margin-right: -0.5rem;
+            padding-right: 0.5rem;
+        }
+
+        /* Custom Scrollbar */
+        .file-tree-container::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .file-tree-container::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+        }
+
+        .empty-state {
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            text-align: center;
+            margin-top: 2rem;
+            font-style: italic;
+        }
+
+        /* Sort Controls */
+        .sidebar-controls {
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .sort-select {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-family: inherit;
+            flex: 1;
+            outline: none;
+        }
+
+        .sort-select:focus {
+            border-color: var(--primary);
+        }
+
+        /* Tree Items */
+        .tree-item {
+            cursor: pointer;
+            padding: 0.5rem 0.5rem;
+            border-radius: 4px;
+            color: var(--text-muted);
+            font-size: 0.9rem;
+            overflow: hidden;
+            transition: background 0.2s, color 0.2s;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            gap: 0.1rem;
+        }
+
+        .tree-item-row-main {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .tree-item-meta {
+            font-size: 0.7rem;
+            color: #FFD700;
+            margin-left: 1.6rem;
+            display: flex;
+            gap: 0.8rem;
+        }
+
+        .tree-item:hover {
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-main);
+        }
+
+        .tree-item.active {
+            background: var(--primary-dim);
+            color: var(--primary);
+            border-left: 2px solid var(--primary);
+        }
+
+        .tree-group {
+            margin-left: 1rem;
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        /* Main Area */
+        .viewer-area {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        .top-bar {
+            height: 70px;
+            padding: 0 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(10, 11, 16, 0.5);
+            z-index: 5;
+        }
+
+        .file-info h2 {
+            font-size: 1.1rem;
+            font-weight: 500;
+        }
+
+        .status-badge {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            margin-top: 0.2rem;
+            display: inline-block;
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background: radial-gradient(circle at center, #1b1e2b 0%, #0d0f14 100%);
+            overflow: hidden;
+        }
+
+        .placeholder-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-muted);
+            font-size: 1.2rem;
+            opacity: 0.5;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="brand">
+                <h1>STL Explorer</h1>
+                <span class="version">v0.0.20</span>
+            </div>
+
+            <button id="btn-open-folder" class="btn-primary">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                </svg>
+                開啟資料夾
+            </button>
+            <button id="btn-recent-folder" class="btn-secondary" style="display:none;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M1 4v6h6"></path>
+                    <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path>
+                </svg>
+                開啟最近: <span id="recent-folder-name"></span>
+            </button>
+            <input type="file" id="folder-input" webkitdirectory directory multiple style="display:none">
+
+            <div class="sidebar-controls">
+                <label for="sort-select">排序：</label>
+                <select id="sort-select" class="sort-select">
+                    <option value="name_asc">名稱 (A-Z)</option>
+                    <option value="name_desc">名稱 (Z-A)</option>
+                    <option value="size_desc">大小 (大->小)</option>
+                    <option value="size_asc">大小 (小->大)</option>
+                    <option value="date_desc">日期 (新->舊)</option>
+                    <option value="date_asc">日期 (舊->新)</option>
+                </select>
+            </div>
+
+            <div class="file-tree-container">
+                <div id="file-tree" class="file-tree">
+                    <div class="empty-state">請選擇資料夾以開始瀏覽<br><small>(支援單機模式)</small></div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Resizer Handle -->
+        <div id="resizer" class="resizer"></div>
+
+        <!-- Main Viewer Area -->
+        <main class="viewer-area">
+            <header class="top-bar">
+                <div class="file-info">
+                    <h2 id="current-filename">未選擇檔案</h2>
+                    <span id="file-status" class="status-badge">Ready</span>
+
+                    <!-- Model Stats -->
+                    <div id="model-stats" class="model-stats" style="display:none;">
+                        <span class="stat-item">📏 <span id="stat-dims">-</span></span>
+                        <span class="stat-divider">|</span>
+                        <span class="stat-item">🔺 <span id="stat-faces">-</span></span>
+                    </div>
+                </div>
+                <div class="controls">
+                    <!-- Future controls -->
+                </div>
+            </header>
+
+            <div id="canvas-container" class="canvas-wrapper">
+                <div class="placeholder-text">
+                    <p>選擇左側 STL 檔案進行預覽</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // ===== VIEWER.JS =====
+        let scene, camera, renderer, controls;
+        let currentMesh = null;
+
+        function initViewer(container) {
+            if (!THREE) {
+                console.error('Three.js not loaded');
+                return;
+            }
+
+            // 1. Scene
+            scene = new THREE.Scene();
+            scene.background = null;
+
+            // 2. Camera
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+            camera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+            camera.position.set(0, 50, 60);
+            camera.lookAt(0, 0, 0);
+
+            // 3. Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            container.appendChild(renderer.domElement);
+
+            // 4. Controls
+            if (THREE.OrbitControls) {
+                controls = new THREE.OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+            } else {
+                console.warn('OrbitControls not loaded');
+            }
+
+            // 5. Lights
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+            dirLight.position.set(10, 20, 10);
+            scene.add(dirLight);
+
+            const dirLight2 = new THREE.DirectionalLight(0xaaccff, 0.3);
+            dirLight2.position.set(-10, 5, -10);
+            scene.add(dirLight2);
+
+            // 6. Helpers - 100x100mm Workplane (Grid)
+            const size = 100;
+            const divisions = 10;
+            const gridHelper = new THREE.GridHelper(size, divisions, 0xaaaaaa, 0x555555);
+            scene.add(gridHelper);
+
+            // Animation loop
+            animate();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            if (controls) controls.update();
+            if (renderer && scene && camera) {
+                renderer.render(scene, camera);
+            }
+        }
+
+        function resizeViewer(container) {
+            if (!renderer || !camera) return;
+
+            const width = container.clientWidth;
+            const height = container.clientHeight;
+
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+
+            renderer.setSize(width, height);
+        }
+
+        function loadSTL(arrayBuffer) {
+            if (!scene || !THREE.STLLoader) return;
+
+            // Remove old mesh
+            if (currentMesh) {
+                scene.remove(currentMesh);
+                if (currentMesh.geometry) currentMesh.geometry.dispose();
+                if (currentMesh.material) currentMesh.material.dispose();
+                currentMesh = null;
+            }
+
+            const loader = new THREE.STLLoader();
+            const geometry = loader.parse(arrayBuffer);
+
+            // Center geometry
+            geometry.center();
+
+            // Compute size for camera positioning
+            geometry.computeBoundingBox();
+            const bbox = geometry.boundingBox;
+            const size = new THREE.Vector3();
+            bbox.getSize(size);
+
+            // Material: Yellow
+            const material = new THREE.MeshPhongMaterial({
+                color: 0xFFFF00,
+                specular: 0x444444,
+                shininess: 30,
+                side: THREE.DoubleSide
+            });
+
+            currentMesh = new THREE.Mesh(geometry, material);
+
+            // Rotate to stand up
+            currentMesh.rotation.x = -Math.PI / 2;
+            currentMesh.rotation.z = Math.PI / 4;
+
+            // Position on grid
+            currentMesh.position.y = size.z / 2;
+
+            scene.add(currentMesh);
+
+            // Fit Camera with 45-degree view (70° vertical)
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const gridSize = 100;
+            const targetSize = Math.max(gridSize, maxDim * 1.2);
+
+            const fov = camera.fov * (Math.PI / 180);
+            const distance = targetSize / (3.5 * Math.tan(fov / 2));
+
+            const angle = Math.PI / 4; // 45 degrees horizontal
+            const heightRatio = 2.75; // 70° vertical
+
+            const camX = distance * Math.cos(angle);
+            const camZ = distance * Math.sin(angle);
+            const camY = distance * heightRatio;
+
+            camera.position.set(camX, camY, camZ);
+            controls.target.set(0, size.z / 2, 0);
+            controls.update();
+
+            // Return Stats
+            const dims = {
+                x: parseFloat(size.x.toFixed(2)),
+                y: parseFloat(size.y.toFixed(2)),
+                z: parseFloat(size.z.toFixed(2))
+            };
+
+            let triCount = 0;
+            if (geometry.index) {
+                triCount = geometry.index.count / 3;
+            } else {
+                triCount = geometry.attributes.position.count / 3;
+            }
+
+            return {
+                dimensions: dims,
+                triangles: triCount
+            };
+        }
+
+        window.initViewer = initViewer;
+        window.resizeViewer = resizeViewer;
+        window.loadSTL = loadSTL;
+    </script>
+
+    <script>
+        // ===== SCRIPT.JS =====
+
+        // DOM Elements
+        const btnOpenFolder = document.getElementById('btn-open-folder');
+        const btnRecentFolder = document.getElementById('btn-recent-folder');
+        const recentFolderNameEl = document.getElementById('recent-folder-name');
+        const fileInput = document.getElementById('folder-input');
+        const fileTree = document.getElementById('file-tree');
+        const currentFilenameEl = document.getElementById('current-filename');
+        const fileStatusEl = document.getElementById('file-status');
+        const canvasContainer = document.getElementById('canvas-container');
+        const sortSelect = document.getElementById('sort-select');
+        const resizer = document.getElementById('resizer');
+        const sidebar = document.querySelector('.sidebar');
+
+        // State
+        let rootHandle = null;
+        let currentSort = 'name_asc';
+
+        // IndexedDB Helper
+        const DB_NAME = 'STLExplorerDB';
+        const STORE_NAME = 'settings';
+
+        function openDB() {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open(DB_NAME, 1);
+                req.onerror = () => reject(req.error);
+                req.onsuccess = () => resolve(req.result);
+                req.onupgradeneeded = (e) => {
+                    e.target.result.createObjectStore(STORE_NAME);
+                };
+            });
+        }
+
+        async function saveHandleToDB(handle) {
+            try {
+                const db = await openDB();
+                const tx = db.transaction(STORE_NAME, 'readwrite');
+                tx.objectStore(STORE_NAME).put(handle, 'rootHandle');
+            } catch (e) {
+                console.warn('IDB Save failed', e);
+            }
+        }
+
+        async function getHandleFromDB() {
+            return new Promise(async (resolve) => {
+                try {
+                    const db = await openDB();
+                    const tx = db.transaction(STORE_NAME, 'readonly');
+                    const req = tx.objectStore(STORE_NAME).get('rootHandle');
+                    req.onsuccess = () => resolve(req.result);
+                    req.onerror = () => resolve(null);
+                } catch (e) {
+                    resolve(null);
+                }
+            });
+        }
+
+        // Initialize
+        async function init() {
+            console.log('App Initialized (Standalone Mode v0.0.20)');
+
+            if (window.initViewer) {
+                window.initViewer(canvasContainer);
+            }
+
+            btnOpenFolder.addEventListener('click', handleOpenFolder);
+            btnRecentFolder.addEventListener('click', handleRecentFolder);
+            fileInput.addEventListener('change', handleFileInputChange);
+
+            // Check for saved session
+            const savedHandle = await getHandleFromDB();
+            if (savedHandle) {
+                btnRecentFolder.style.display = 'flex';
+                recentFolderNameEl.textContent = savedHandle.name;
+            }
+
+            // Sorting
+            sortSelect.addEventListener('change', (e) => {
+                currentSort = e.target.value;
+                if (rootHandle) buildFileTree(rootHandle, fileTree);
+                else if (globalVirtualTreeRoot) {
+                    fileTree.innerHTML = '';
+                    renderVirtualTree(globalVirtualTreeRoot, fileTree, globalVirtualTreeName);
+                }
+            });
+
+            // Resizer Logic
+            initResizer();
+
+            window.addEventListener('resize', () => {
+                if (window.resizeViewer) window.resizeViewer(canvasContainer);
+            });
+        }
+
+        function initResizer() {
+            let isResizing = false;
+
+            resizer.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                resizer.classList.add('active');
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+
+                const newWidth = e.clientX;
+
+                if (newWidth > 200 && newWidth < window.innerWidth * 0.6) {
+                    sidebar.style.width = `${newWidth}px`;
+                    if (window.resizeViewer) window.resizeViewer(canvasContainer);
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+                    resizer.classList.remove('active');
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    if (window.resizeViewer) window.resizeViewer(canvasContainer);
+                }
+            });
+        }
+
+        // Helpers
+        function formatSize(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return '-';
+            const d = new Date(timestamp);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            const hours = String(d.getHours()).padStart(2, '0');
+            const minutes = String(d.getMinutes()).padStart(2, '0');
+            const seconds = String(d.getSeconds()).padStart(2, '0');
+            return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        }
+
+        let globalVirtualTreeRoot = null;
+        let globalVirtualTreeName = null;
+
+        async function handleOpenFolder() {
+            if ('showDirectoryPicker' in window) {
+                try {
+                    const savedHandle = await getHandleFromDB();
+                    const options = savedHandle ? { startIn: savedHandle } : {};
+
+                    rootHandle = await window.showDirectoryPicker(options);
+                    await saveHandleToDB(rootHandle);
+
+                    btnRecentFolder.style.display = 'flex';
+                    recentFolderNameEl.textContent = rootHandle.name;
+
+                    globalVirtualTreeRoot = null;
+                    await buildFileTree(rootHandle, fileTree);
+                    fileStatusEl.textContent = `已載入: ${rootHandle.name}`;
+                    fileStatusEl.style.color = '#00f2ff';
+                    fileStatusEl.style.display = 'inline';
+                } catch (err) {
+                    if (err.name === 'AbortError') return;
+                    console.warn('FS Access failed, using fallback:', err);
+                    fileInput.click();
+                }
+            } else {
+                fileInput.click();
+            }
+        }
+
+        async function handleRecentFolder() {
+            const handle = await getHandleFromDB();
+            if (!handle) return;
+
+            const options = { mode: 'read' };
+            if ((await handle.queryPermission(options)) === 'granted') {
+                rootHandle = handle;
+                await buildFileTree(rootHandle, fileTree);
+                fileStatusEl.textContent = `已載入 (Recent): ${rootHandle.name}`;
+                fileStatusEl.style.color = '#00f2ff';
+                fileStatusEl.style.display = 'inline';
+                return;
+            }
+
+            if ((await handle.requestPermission(options)) === 'granted') {
+                rootHandle = handle;
+                await buildFileTree(rootHandle, fileTree);
+                fileStatusEl.textContent = `已載入 (Recent): ${rootHandle.name}`;
+                fileStatusEl.style.color = '#00f2ff';
+                fileStatusEl.style.display = 'inline';
+            } else {
+                alert('Permission denied.');
+            }
+        }
+
+        function handleFileInputChange(e) {
+            const files = Array.from(e.target.files);
+            if (!files || files.length === 0) return;
+
+            fileStatusEl.textContent = 'Processing files...';
+            fileTree.innerHTML = '';
+
+            const tree = {};
+            files.forEach(file => {
+                const parts = file.webkitRelativePath.split('/');
+                let current = tree;
+                parts.forEach((part, index) => {
+                    if (index === parts.length - 1) {
+                        current[part] = file;
+                    } else {
+                        if (!current[part]) current[part] = {};
+                        current = current[part];
+                    }
+                });
+            });
+
+            const rootName = files[0].webkitRelativePath.split('/')[0];
+
+            globalVirtualTreeRoot = tree[rootName] ? tree[rootName] : tree;
+            globalVirtualTreeName = rootName;
+            rootHandle = null;
+
+            renderVirtualTree(globalVirtualTreeRoot, fileTree, rootName);
+
+            fileStatusEl.textContent = `Loaded: ${rootName}`;
+            fileStatusEl.style.color = '#00f2ff';
+        }
+
+        function sortEntries(entries) {
+            return entries.sort((a, b) => {
+                const aIsDir = a.kind === 'directory';
+                const bIsDir = b.kind === 'directory';
+
+                if (aIsDir && !bIsDir) return -1;
+                if (!aIsDir && bIsDir) return 1;
+
+                const [field, order] = currentSort.split('_');
+                const multiplier = order === 'asc' ? 1 : -1;
+
+                if (field === 'name') {
+                    return a.name.localeCompare(b.name) * multiplier;
+                } else if (field === 'size') {
+                    return ((a.size || 0) - (b.size || 0)) * multiplier;
+                } else if (field === 'date') {
+                    return ((a.lastModified || 0) - (b.lastModified || 0)) * multiplier;
+                }
+                return 0;
+            });
+        }
+
+        function renderVirtualTree(node, parentElement, nodeName) {
+            if (node instanceof File) {
+                renderFileItem(node, parentElement);
+                return;
+            }
+
+            const itemEl = document.createElement('div');
+            const row = document.createElement('div');
+            row.className = 'tree-item';
+            row.innerHTML = `<div class="tree-item-row-main">📁 ${nodeName}</div>`;
+            itemEl.appendChild(row);
+
+            const childrenContainer = document.createElement('div');
+            childrenContainer.className = 'tree-group';
+            childrenContainer.style.display = 'none';
+            itemEl.appendChild(childrenContainer);
+
+            const childrenKeys = Object.keys(node);
+            const children = childrenKeys.map(key => {
+                const child = node[key];
+                if (child instanceof File) {
+                    return {
+                        name: key,
+                        kind: 'file',
+                        size: child.size,
+                        lastModified: child.lastModified,
+                        raw: child
+                    };
+                } else {
+                    return {
+                        name: key,
+                        kind: 'directory',
+                        size: 0,
+                        lastModified: 0,
+                        raw: child
+                    };
+                }
+            });
+
+            const sortedChildren = sortEntries(children);
+
+            sortedChildren.forEach(child => {
+                renderVirtualTree(child.raw, childrenContainer, child.name);
+            });
+
+            row.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const isCollapsed = childrenContainer.style.display === 'none';
+                childrenContainer.style.display = isCollapsed ? 'block' : 'none';
+                const icon = isCollapsed ? '📂' : '📁';
+                row.querySelector('.tree-item-row-main').innerHTML = `${icon} ${nodeName}`;
+            });
+
+            parentElement.appendChild(itemEl);
+        }
+
+        function renderFileItem(file, parentElement) {
+            const itemEl = document.createElement('div');
+            itemEl.className = 'tree-item';
+            const isSTL = file.name.toLowerCase().endsWith('.stl');
+
+            const icon = isSTL ? '🧊' : '📄';
+
+            itemEl.innerHTML = `
+                <div class="tree-item-row-main" style="${isSTL ? 'color:#fff' : ''}">
+                    ${icon} ${file.name}
+                </div>
+                <div class="tree-item-meta">
+                    <span>${formatSize(file.size)}</span>
+                    <span>${formatDate(file.lastModified)}</span>
+                </div>
+            `;
+
+            if (isSTL) {
+                itemEl.addEventListener('click', () => handleVirtualFileSelect(file, itemEl));
+            }
+            parentElement.appendChild(itemEl);
+        }
+
+        async function handleVirtualFileSelect(file, uiElement) {
+            document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
+            uiElement.classList.add('active');
+
+            currentFilenameEl.textContent = file.name;
+            fileStatusEl.textContent = 'Loading...';
+            fileStatusEl.style.color = 'yellow';
+
+            const placeholder = document.querySelector('.placeholder-text');
+            if (placeholder) placeholder.style.display = 'none';
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                if (window.loadSTL) {
+                    const stats = window.loadSTL(arrayBuffer);
+                    if (stats) {
+                        document.getElementById('model-stats').style.display = 'inline-flex';
+                        const d = stats.dimensions;
+                        document.getElementById('stat-dims').textContent = `${d.x}x${d.y}x${d.z}mm`;
+                        document.getElementById('stat-faces').textContent = stats.triangles.toLocaleString();
+
+                        fileStatusEl.style.display = 'none';
+                    }
+                }
+                fileStatusEl.textContent = 'Rendering';
+                fileStatusEl.style.color = '#00f2ff';
+            } catch (err) {
+                console.error(err);
+                fileStatusEl.textContent = 'Error';
+                fileStatusEl.style.color = 'red';
+            }
+        }
+
+        async function buildFileTree(dirHandle, parentElement) {
+            parentElement.innerHTML = '';
+
+            const entries = [];
+            for await (const entry of dirHandle.values()) {
+                let extraProps = {};
+                if (entry.kind === 'file') {
+                    try {
+                        const file = await entry.getFile();
+                        extraProps = { size: file.size, lastModified: file.lastModified };
+                    } catch (e) {
+                        console.warn('Cannot read file meta', entry.name);
+                    }
+                }
+
+                entries.push({
+                    ...extraProps,
+                    name: entry.name,
+                    kind: entry.kind,
+                    raw: entry
+                });
+            }
+
+            const sortedEntries = sortEntries(entries);
+
+            for (const data of sortedEntries) {
+                const entry = data.raw;
+                const itemEl = document.createElement('div');
+
+                if (entry.kind === 'directory') {
+                    const row = document.createElement('div');
+                    row.className = 'tree-item';
+                    row.innerHTML = `<div class="tree-item-row-main">📁 ${entry.name}</div>`;
+                    itemEl.appendChild(row);
+
+                    const childrenContainer = document.createElement('div');
+                    childrenContainer.className = 'tree-group';
+                    childrenContainer.style.display = 'none';
+                    itemEl.appendChild(childrenContainer);
+
+                    row.addEventListener('click', async (e) => {
+                        e.stopPropagation();
+                        if (childrenContainer.style.display === 'none') {
+                            if (childrenContainer.children.length === 0) {
+                                await buildFileTree(entry, childrenContainer);
+                            }
+                            childrenContainer.style.display = 'block';
+                            row.querySelector('.tree-item-row-main').innerHTML = `📂 ${entry.name}`;
+                        } else {
+                            childrenContainer.style.display = 'none';
+                            row.querySelector('.tree-item-row-main').innerHTML = `📁 ${entry.name}`;
+                        }
+                    });
+                } else if (entry.kind === 'file') {
+                    itemEl.className = 'tree-item';
+                    const isSTL = entry.name.toLowerCase().endsWith('.stl');
+                    const icon = isSTL ? '🧊' : '📄';
+
+                    itemEl.innerHTML = `
+                        <div class="tree-item-row-main" style="${isSTL ? 'color:#fff' : ''}">
+                            ${icon} ${entry.name}
+                        </div>
+                        <div class="tree-item-meta">
+                            <span>${formatSize(data.size)}</span>
+                            <span>${formatDate(data.lastModified)}</span>
+                        </div>
+                    `;
+
+                    if (isSTL) {
+                        itemEl.addEventListener('click', () => handleFSAFileSelect(entry, itemEl));
+                    }
+                }
+                parentElement.appendChild(itemEl);
+            }
+        }
+
+        async function handleFSAFileSelect(fileHandle, uiElement) {
+            document.querySelectorAll('.tree-item.active').forEach(el => el.classList.remove('active'));
+            uiElement.classList.add('active');
+
+            currentFilenameEl.textContent = fileHandle.name;
+            fileStatusEl.textContent = 'Loading...';
+            fileStatusEl.style.color = 'yellow';
+
+            try {
+                const file = await fileHandle.getFile();
+                const arrayBuffer = await file.arrayBuffer();
+
+                const placeholder = document.querySelector('.placeholder-text');
+                if (placeholder) placeholder.style.display = 'none';
+
+                if (window.loadSTL) {
+                    const stats = window.loadSTL(arrayBuffer);
+                    if (stats) {
+                        document.getElementById('model-stats').style.display = 'inline-flex';
+
+                        const d = stats.dimensions;
+                        const dimsText = `${d.x}x${d.y}x${d.z}mm`;
+                        const facesText = stats.triangles.toLocaleString();
+
+                        document.getElementById('stat-dims').textContent = dimsText;
+                        document.getElementById('stat-faces').textContent = facesText;
+                    }
+                }
+
+                fileStatusEl.textContent = 'Ready';
+                fileStatusEl.style.display = 'none';
+
+                fileStatusEl.style.color = '#00f2ff';
+            } catch (err) {
+                console.error(err);
+                fileStatusEl.textContent = 'Error';
+                fileStatusEl.style.color = 'red';
+            }
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+
+</html>
